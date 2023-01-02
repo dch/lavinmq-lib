@@ -7,6 +7,105 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [1.0.10] - 2022-12-05
+
+### Added
+
+- Can configure multiple TCP options, both TCP and internal buffer sizes
+- Streams queue example
+
+### Changed
+
+- Default to 60s (before 15s) read timeout during connection establishment
+- Cancel consumer if callback raises unexpected exception
+- Augment Connection::ClosedException with host, user and vhost
+- Don't try to reject messages coming to a deleted consumer (might have been a noack consumer)
+
+### Fixed
+
+- Don't flush socket when publishing when in transaction mode, greatly increasing Tx publishing speed
+- Removed exchange_declare's exclusive parameter
+- Match parameter names for inherited methods
+- Close all consumers when closing Channel to prevent blocks
+- Raise an exception if trying to call wait_for_confirm on a channel that isn't in confirm mode
+
+## [1.0.9] - 2022-03-27
+
+### Added
+
+- A OpenSSL::SSL::Context::Client can be passed to AMQP::Client and will be reused for multiple connection, saving considerable amount of memory
+
+## [1.0.8] - 2022-03-24
+
+### Added
+
+- Make it possible to disable TCP keepalive (by setting the values to 0)
+
+## [1.0.7] - 2022-01-31
+
+### Fixed
+
+- VERSION is correct (not the version of the app the lib is included in)
+
+### Changed
+
+- Default connection_name to PROGRAM_NAME, for easier identifitcation in the server's connection listing
+
+## [1.0.6] - 2022-01-13
+
+### Fixed
+
+- Restore AMQP::Client::Message, as a abstract struct for Deliver and Get messages
+- Requeue messages received for cancelled consumers
+
+### Changed
+
+- Make basic_cancel no_wait by default, so that consumers with prefetch 0 won't block on it.
+
+## [1.0.5] - 2022-01-11
+
+### Fixed
+
+- Memory usage per connection is down 95%
+- Allow custom queue properties also for temporary queues (where name is empty)
+
+### Added
+
+- Log warning that user should increase prefetch limit, when the read loop have to wait to deliver messages to worker(s)
+- Queue#unsubscribe now supports the no_wait argument
+- Better API documentation
+
+### Changed
+
+- Blocking consumers can now also have multiple workers
+- Better exception handling in blocking consumers
+- Reduced cyclomatic complexity in many methods
+
+## [1.0.4] - 2021-11-16
+
+### Added
+
+- Can configure tcp keepalive settings with ?tcp_keepalive=60:10:3, (idle, interval, count)
+- Can configure tcp nodelay settings with ?tcp_nodelay
+- Support for AMQP Transactions
+
+### Fixed
+
+- Each connection is now using 95% less memory, 37KB/connection
+
+## [1.0.3] - 2021-10-08
+
+### Fixed
+
+- Handle CloseOk write errors
+- Using a closed channel would break connection
+
+## [1.0.2] - 2021-09-21
+
+### Changed
+
+- Raise ChannelClosedError on write if channel is closed
+
 ## [1.0.1] - 2021-04-01
 
 ### Fixed

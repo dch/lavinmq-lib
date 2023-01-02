@@ -4,22 +4,24 @@ on:
   push:
     branches:
       - master
+    paths:
+      - src/
 
 jobs:
-  deploy_docs:
+  docs:
     runs-on: ubuntu-latest
     container:
-      image: crystallang/crystal:latest-alpine
+      image: 84codes/crystal:latest-alpine
     steps:
-      - name: Install Build Dependencies
-        run: apk add --update rsync
-      - uses: actions/checkout@v2
-      - name: Install Dependencies
-        run: shards install --production
-      - name: Build
-        run:  crystal docs lib/amq-protocol/src/amq-protocol.cr src/amqp-client.cr
-      - name: Deploy
-        uses: JamesIves/github-pages-deploy-action@3.7.1
+      - name: Install rsync
+        run: apk add --no-cache rsync
+      - uses: actions/checkout@v3
+      - name: Install shards
+        run: shards install
+      - name: Build docs
+        run:  crystal docs src/amqp-client.cr
+      - name: Deploy docs
+        uses: JamesIves/github-pages-deploy-action@4.1.5
         with:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           BRANCH: gh-pages

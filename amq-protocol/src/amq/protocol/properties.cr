@@ -1,3 +1,5 @@
+require "./table"
+
 module AMQ
   module Protocol
     struct Properties
@@ -25,14 +27,14 @@ module AMQ
       property reply_to
       property expiration
       property message_id
-      property timestamp
+      property timestamp_raw : Int64?
       property type
       property user_id
       property app_id
       property reserved1
 
       def_equals_and_hash content_type, content_encoding, headers, delivery_mode,
-        priority, correlation_id, reply_to, expiration, message_id, timestamp,
+        priority, correlation_id, reply_to, expiration, message_id, timestamp_raw,
         type, user_id, app_id, reserved1
 
       def initialize(@content_type : String? = nil,
@@ -44,22 +46,76 @@ module AMQ
                      @reply_to : String? = nil,
                      @expiration : String? = nil,
                      @message_id : String? = nil,
-                     @timestamp : Time? = nil,
+                     timestamp : Time | Int64 | Nil = nil,
                      @type : String? = nil,
                      @user_id : String? = nil,
                      @app_id : String? = nil,
                      @reserved1 : String? = nil)
+        @timestamp_raw = timestamp.is_a?(Time) ? timestamp.to_unix : timestamp
       end
 
-      def self.from_io(io, format, bytesize = 2)
-        flags = UInt16.from_io io, format
+      def self.from_bytes(bytes, format, bytesize = 2)
+        pos = 0
+        flags = format.decode(UInt16, bytes[pos, 2]); pos += 2
         invalid = false
         invalid ||= flags & 1_u16 << 0 > 0
         invalid ||= flags & 2_u16 << 0 > 0
         if invalid
-          io.skip(bytesize - 2)
           raise Error::FrameDecode.new("Invalid property flags")
         end
+
+        if flags & FLAG_CONTENT_TYPE > 0
+          content_type = ShortString.from_bytes(bytes + pos, format); pos += 1 + content_type.bytesize
+        end
+        if flags & FLAG_CONTENT_ENCODING > 0
+          content_encoding = ShortString.from_bytes(bytes + pos, format); pos += 1 + content_encoding.bytesize
+        end
+        if flags & FLAG_HEADERS > 0
+          headers = Table.from_bytes(bytes + pos, format); pos += headers.bytesize
+        end
+        if flags & FLAG_DELIVERY_MODE > 0
+          delivery_mode = bytes[pos]; pos += 1
+        end
+        if flags & FLAG_PRIORITY > 0
+          priority = bytes[pos]; pos += 1
+        end
+        if flags & FLAG_CORRELATION_ID > 0
+          correlation_id = ShortString.from_bytes(bytes + pos, format); pos += 1 + correlation_id.bytesize
+        end
+        if flags & FLAG_REPLY_TO > 0
+          reply_to = ShortString.from_bytes(bytes + pos, format); pos += 1 + reply_to.bytesize
+        end
+        if flags & FLAG_EXPIRATION > 0
+          expiration = ShortString.from_bytes(bytes + pos, format); pos += 1 + expiration.bytesize
+        end
+        if flags & FLAG_MESSAGE_ID > 0
+          message_id = ShortString.from_bytes(bytes + pos, format); pos += 1 + message_id.bytesize
+        end
+        if flags & FLAG_TIMESTAMP > 0
+          timestamp_raw = format.decode(Int64, bytes[pos, 8]); pos += 8
+        end
+        if flags & FLAG_TYPE > 0
+          type = ShortString.from_bytes(bytes + pos, format); pos += 1 + type.bytesize
+        end
+        if flags & FLAG_USER_ID > 0
+          user_id = ShortString.from_bytes(bytes + pos, format); pos += 1 + user_id.bytesize
+        end
+        if flags & FLAG_APP_ID > 0
+          app_id = ShortString.from_bytes(bytes + pos, format); pos += 1 + app_id.bytesize
+        end
+        if flags & FLAG_RESERVED1 > 0
+          reserved1 = ShortString.from_bytes(bytes + pos, format); pos += 1 + reserved1.bytesize
+        end
+        Properties.new(content_type, content_encoding, headers, delivery_mode,
+          priority, correlation_id, reply_to, expiration,
+          message_id, timestamp_raw, type, user_id, app_id, reserved1)
+      end
+
+      def self.from_io(io, format, flags = UInt16.from_io(io, format))
+        invalid = false
+        invalid ||= flags & 1_u16 << 0 > 0
+        invalid ||= flags & 2_u16 << 0 > 0
+        raise Error::FrameDecode.new("Invalid property flags") if invalid
         content_type = ShortString.from_io(io, format) if flags & FLAG_CONTENT_TYPE > 0
         content_encoding = ShortString.from_io(io, format) if flags & FLAG_CONTENT_ENCODING > 0
         headers = Table.from_io(io, format) if flags & FLAG_HEADERS > 0
@@ -69,22 +125,21 @@ module AMQ
         reply_to = ShortString.from_io(io, format) if flags & FLAG_REPLY_TO > 0
         expiration = ShortString.from_io(io, format) if flags & FLAG_EXPIRATION > 0
         message_id = ShortString.from_io(io, format) if flags & FLAG_MESSAGE_ID > 0
-        timestamp = Time.unix(Int64.from_io(io, format)) if flags & FLAG_TIMESTAMP > 0
+        timestamp_raw = Int64.from_io(io, format) if flags & FLAG_TIMESTAMP > 0
         type = ShortString.from_io(io, format) if flags & FLAG_TYPE > 0
         user_id = ShortString.from_io(io, format) if flags & FLAG_USER_ID > 0
         app_id = ShortString.from_io(io, format) if flags & FLAG_APP_ID > 0
         reserved1 = ShortString.from_io(io, format) if flags & FLAG_RESERVED1 > 0
         Properties.new(content_type, content_encoding, headers, delivery_mode,
           priority, correlation_id, reply_to, expiration,
-          message_id, timestamp, type, user_id, app_id, reserved1)
+          message_id, timestamp_raw, type, user_id, app_id, reserved1)
       end
 
-      def self.from_json(data : JSON::Any)
+      def self.from_json(data : JSON::Any) : self
         p = Properties.new
         p.content_type = data["content_type"]?.try(&.as_s)
         p.content_encoding = data["content_encoding"]?.try(&.as_s)
-        p.headers = data["headers"]?.try(&.as_h?)
-          .try { |hdrs| Table.new self.cast_to_field(hdrs).as(Hash(String, Field)) }
+        p.headers = data["headers"]?.try(&.as_h?).try { |hdrs| Table.new hdrs }
         p.delivery_mode = data["delivery_mode"]?.try(&.as_i?.try(&.to_u8))
         p.priority = data["priority"]?.try(&.as_i?.try(&.to_u8))
         p.correlation_id = data["correlation_id"]?.try(&.as_s)
@@ -92,35 +147,12 @@ module AMQ
         exp = data["expiration"]?
         p.expiration = exp.try { |e| e.as_s? || e.as_i64?.try(&.to_s) }
         p.message_id = data["message_id"]?.try(&.as_s)
-        p.timestamp = data["timestamp"]?.try(&.as_i64?).try { |s| Time.unix(s) }
+        p.timestamp_raw = data["timestamp"]?.try(&.as_i64?)
         p.type = data["type"]?.try(&.as_s)
         p.user_id = data["user_id"]?.try(&.as_s)
         p.app_id = data["app_id"]?.try(&.as_s)
         p.reserved1 = data["reserved"]?.try(&.as_s)
         p
-      end
-
-      # https://github.com/crystal-lang/crystal/issues/4885#issuecomment-325109328
-      def self.cast_to_field(x : Array) : Field
-        x.map { |e| cast_to_field(e).as(Field) }.as(Field)
-      end
-
-      def self.cast_to_field(x : Hash) : Field
-        h = Hash(String, Field).new
-        x.each do |(k, v)|
-          h[k] = cast_to_field(v).as(Field)
-        end
-        h
-      end
-
-      def self.cast_to_field(x : JSON::Any) : Field
-        if a = x.as_a?
-          cast_to_field(a)
-        elsif h = x.as_h?
-          cast_to_field(h)
-        else
-          x.raw.as(Field)
-        end
       end
 
       def to_json(json : JSON::Builder)
@@ -134,7 +166,7 @@ module AMQ
           "reply_to"         => @reply_to,
           "expiration"       => @expiration,
           "message_id"       => @message_id,
-          "timestamp"        => @timestamp,
+          "timestamp"        => @timestamp_raw,
           "type"             => @type,
           "user_id"          => @user_id,
           "app_id"           => @app_id,
@@ -153,46 +185,95 @@ module AMQ
         flags = flags | FLAG_REPLY_TO if @reply_to
         flags = flags | FLAG_EXPIRATION if @expiration
         flags = flags | FLAG_MESSAGE_ID if @message_id
-        flags = flags | FLAG_TIMESTAMP if @timestamp
+        flags = flags | FLAG_TIMESTAMP if @timestamp_raw
         flags = flags | FLAG_TYPE if @type
         flags = flags | FLAG_USER_ID if @user_id
         flags = flags | FLAG_APP_ID if @app_id
         flags = flags | FLAG_RESERVED1 if @reserved1
-
         io.write_bytes(flags, format)
 
-        io.write_bytes ShortString.new(@content_type.not_nil!), format if @content_type
-        io.write_bytes ShortString.new(@content_encoding.not_nil!), format if @content_encoding
-        io.write_bytes @headers.not_nil!, format if @headers
-        io.write_byte @delivery_mode.not_nil! if @delivery_mode
-        io.write_byte @priority.not_nil! if @priority
-        io.write_bytes ShortString.new(@correlation_id.not_nil!), format if @correlation_id
-        io.write_bytes ShortString.new(@reply_to.not_nil!), format if @reply_to
-        io.write_bytes ShortString.new(@expiration.not_nil!), format if @expiration
-        io.write_bytes ShortString.new(@message_id.not_nil!), format if @message_id
-        io.write_bytes @timestamp.not_nil!.to_unix.to_i64, format if @timestamp
-        io.write_bytes ShortString.new(@type.not_nil!), format if @type
-        io.write_bytes ShortString.new(@user_id.not_nil!), format if @user_id
-        io.write_bytes ShortString.new(@app_id.not_nil!), format if @app_id
-        io.write_bytes ShortString.new(@reserved1.not_nil!), format if @reserved1
+        if s = @content_type
+          io.write_bytes ShortString.new(s), format
+        end
+        if s = @content_encoding
+          io.write_bytes ShortString.new(s), format
+        end
+        if h = @headers
+          io.write_bytes h, format
+        end
+        if dm = @delivery_mode
+          io.write_byte dm
+        end
+        if p = @priority
+          io.write_byte p
+        end
+        if s = @correlation_id
+          io.write_bytes ShortString.new(s), format
+        end
+        if s = @reply_to
+          io.write_bytes ShortString.new(s), format
+        end
+        if s = @expiration
+          io.write_bytes ShortString.new(s), format
+        end
+        if s = @message_id
+          io.write_bytes ShortString.new(s), format
+        end
+        if ts = @timestamp_raw
+          io.write_bytes ts, format
+        end
+        if s = @type
+          io.write_bytes ShortString.new(s), format
+        end
+        if s = @user_id
+          io.write_bytes ShortString.new(s), format
+        end
+        if s = @app_id
+          io.write_bytes ShortString.new(s), format
+        end
+        if s = @reserved1
+          io.write_bytes ShortString.new(s), format
+        end
       end
 
       def bytesize
         size = 2
-        size += 1 + @content_type.not_nil!.bytesize if @content_type
-        size += 1 + @content_encoding.not_nil!.bytesize if @content_encoding
-        size += @headers.not_nil!.bytesize if @headers
+        if v = @content_type
+          size += 1 + v.bytesize
+        end
+        if v = @content_encoding
+          size += 1 + v.bytesize
+        end
+        if v = @headers
+          size += v.bytesize
+        end
         size += 1 if @delivery_mode
         size += 1 if @priority
-        size += 1 + @correlation_id.not_nil!.bytesize if @correlation_id
-        size += 1 + @reply_to.not_nil!.bytesize if @reply_to
-        size += 1 + @expiration.not_nil!.bytesize if @expiration
-        size += 1 + @message_id.not_nil!.bytesize if @message_id
-        size += sizeof(Int64) if @timestamp
-        size += 1 + @type.not_nil!.bytesize if @type
-        size += 1 + @user_id.not_nil!.bytesize if @user_id
-        size += 1 + @app_id.not_nil!.bytesize if @app_id
-        size += 1 + @reserved1.not_nil!.bytesize if @reserved1
+        if v = @correlation_id
+          size += 1 + v.bytesize
+        end
+        if v = @reply_to
+          size += 1 + v.bytesize
+        end
+        if v = @expiration
+          size += 1 + v.bytesize
+        end
+        if v = @message_id
+          size += 1 + v.bytesize
+        end
+        size += sizeof(Int64) if @timestamp_raw
+        if v = @type
+          size += 1 + v.bytesize
+        end
+        if v = @user_id
+          size += 1 + v.bytesize
+        end
+        if v = @app_id
+          size += 1 + v.bytesize
+        end
+        if v = @reserved1
+          size += 1 + v.bytesize
+        end
         size
       end
 
@@ -280,12 +361,34 @@ module AMQ
           @reply_to.clone,
           @expiration.clone,
           @message_id.clone,
-          @timestamp.clone,
+          @timestamp_raw.clone,
           @type.clone,
           @user_id.clone,
           @app_id.clone,
           @reserved1.clone
         )
+      end
+
+      # Parse the timestamp_raw value into a `Time`.
+      # Assume it's in seconds since epoch, according to spec.
+      # If that fails assume it's stored as milliseconds.
+      # Else raise AMQ::Protocol::Error::DecodeFrame error.
+      def timestamp : Time?
+        if raw = @timestamp_raw
+          if Int32::MIN <= raw <= Int32::MAX
+            Time.unix(raw)
+          else
+            begin
+              Time.unix_ms(raw)
+            rescue ex : ArgumentError
+              raise Error::FrameDecode.new("Could not parse timestamp value #{raw}", cause: ex)
+            end
+          end
+        end
+      end
+
+      def timestamp=(value : Time?) : Nil
+        @timestamp_raw = value.try &.to_unix
       end
     end
   end

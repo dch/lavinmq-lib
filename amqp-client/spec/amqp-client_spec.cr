@@ -7,14 +7,16 @@ describe AMQP::Client do
     end
   end
 
-  it "should connect to localhost when URI host is empty" do
-    AMQP::Client.start("amqp:///%2f") do |c|
-      c.channel.should_not be_nil
+  unless ENV["CI"]? # localhost not supported in CI
+    it "should connect to localhost when URI host is empty" do
+      AMQP::Client.start("amqp:///%2f") do |c|
+        c.channel.should_not be_nil
+      end
     end
   end
 
   it "should connect to localhost when URI path is empty" do
-    AMQP::Client.start("amqp://localhost/") do |c|
+    AMQP::Client.start do |c|
       c.channel.should_not be_nil
     end
   end
@@ -92,6 +94,37 @@ describe AMQP::Client do
       expect_raises(AMQP::Client::Channel::ClosedException) do
         q.delete(if_empty: true)
       end
+    end
+  end
+
+  it "should raise ClosedException when trying to use a closed channel" do
+    with_channel do |ch|
+      expect_raises(AMQP::Client::Channel::ClosedException) do
+        ch.queue_declare("foobar", passive: true)
+      end
+      expect_raises(AMQP::Client::Channel::ClosedException) do
+        ch.queue
+      end
+    end
+  end
+
+  context "Channel#basic_get" do
+    it "should raise ClosedException when trying to use non-existing queue" do
+      with_channel do |ch|
+        expect_raises(AMQP::Client::Channel::ClosedException, /404/) do
+          ch.basic_get("foobar", no_ack: true)
+        end
+      end
+    end
+  end
+
+  it "should not break connection on Channel::ClosedException" do
+    with_connection do |c|
+      ch = c.channel
+      expect_raises(AMQP::Client::Channel::ClosedException) do
+        ch.queue_declare("foobar", passive: true)
+      end
+      c.closed?.should eq false
     end
   end
 
@@ -174,11 +207,10 @@ describe AMQP::Client do
 
   it "raises exception on write when the server has closed the connection" do
     with_channel do |ch|
-      # rabbitmq doesn't implement client flow
-      ch.flow(false)
+      ch.exchange_declare("foo", "bar", no_wait: true)
       sleep 0.1
       # by now we should've gotten the connection closed by the server
-      expect_raises(AMQP::Client::Connection::ClosedException) do
+      expect_raises(AMQP::Client::Channel::ClosedException) do
         ch.queue
       end
     end
@@ -207,7 +239,7 @@ describe AMQP::Client do
         q.publish "again"
         msg.ack
         b = true
-        q.unsubscribe(tag)
+        q.unsubscribe(tag, no_wait: true)
       end
       b.should be_true
     end
@@ -226,7 +258,7 @@ describe AMQP::Client do
   end
 
   it "should open all queues" do
-    AMQP::Client.start("amqp://localhost/") do |c|
+    AMQP::Client.start do |c|
       (1_u16..c.channel_max).each do |id|
         ch = c.channel
         ch.id.should eq id
@@ -235,35 +267,72 @@ describe AMQP::Client do
   end
 
   it "should set connection name" do
-    AMQP::Client.start("amqp://localhost/?name=My+Name") do |_|
-      sleep 5 # RabbitMQ is slow
-      HTTP::Client.get("http://guest:guest@localhost:15672/api/connections") do |resp|
-        conns = JSON.parse resp.body_io
-        names = conns.as_a.map { |c| c.dig("client_properties", "connection_name") }
-        names.should contain "My Name"
+    AMQP::Client.start(name: "My Name") do |_|
+      names = Array(String).new
+      5.times do
+        HTTP::Client.get("http://guest:guest@#{AMQP::Client::AMQP_HOST}:15672/api/connections") do |resp|
+          conns = JSON.parse resp.body_io
+          names = conns.as_a.map &.dig("client_properties", "connection_name")
+          break if names.includes? "My name"
+        end
+        sleep 1
       end
+      names.should contain "My Name"
     end
   end
 
   it "should not wait for connection close" do
-    conn = AMQP::Client.new("amqp://localhost/").connect
+    conn = AMQP::Client.new.connect
     conn.close(no_wait: true)
   end
 
   it "should not drop messages on basic_cancel" do
     with_channel do |ch|
       tag = "block"
-      q = ch.queue("basic_cancel")
+      q = ch.queue("")
       5.times { q.publish("") }
       messages_handled = 0
       q.subscribe(tag: tag, no_ack: false, block: true) do |msg|
         msg.ack
         messages_handled += 1
-        ch.basic_cancel(tag) if ch.has_subscriber?(tag)
+        ch.basic_cancel(tag)
       end
       sleep 0.5
       (q.message_count + messages_handled).should eq 5
-      q.delete
+    end
+  end
+
+  it "should close channel if unexpected exception in consume block, so that unacked msgs doesn't lay around" do
+    with_channel do |ch|
+      q = ch.queue("unexpected")
+      5.times { q.publish("") }
+      expect_raises(Exception, "myerror") do
+        q.subscribe(no_ack: false, block: true) do |msg|
+          msg.ack
+          raise "myerror"
+        end
+      end
+      ch.closed?.should be_true
+      with_channel do |ch2|
+        q = ch2.queue_delete("unexpected")
+        q[:message_count].should eq 4
+      end
+    end
+  end
+
+  it "should close channel if unexpected exception in consume block" do
+    with_channel do |ch|
+      q = ch.queue("unexpected")
+      5.times { q.publish("") }
+      q.subscribe(no_ack: false, block: false, work_pool: 2) do |_msg|
+        raise "myerror"
+      end
+      sleep 0.1
+      ch.closed?.should be_true
+      with_channel do |ch2|
+        q = ch2.queue_delete("unexpected")
+        q[:message_count].should eq 5
+      end
     end
   end
 
@@ -283,6 +352,33 @@ describe AMQP::Client do
   it "TLS exceptions are raised as AMQP::Client::Error" do
     expect_raises(AMQP::Client::Error) do
       AMQP::Client.new(port: 5672, tls: true).connect
+    end
+  end
+
+  it "can connect over TLS" do
+    pending! "CI doesn't support TLS"
+    c = AMQP::Client.new(port: 5671, tls: true, verify_mode: OpenSSL::SSL::VerifyMode::NONE).connect
+    c.@io.class.should eq OpenSSL::SSL::Socket::Client
+  end
+
+  it "can reuse TLS context between multiple connections" do
+    pending! "CI doesn't support TLS"
+    ctx = OpenSSL::SSL::Context::Client.insecure
+    client = AMQP::Client.new(port: 5671, tls: ctx)
+    conn1 = client.connect
+    conn2 = client.connect
+    conn1.@io.class.should eq OpenSSL::SSL::Socket::Client
+    conn2.@io.class.should eq OpenSSL::SSL::Socket::Client
+  end
+
+  it "version matches shard version" do
+    AMQP::Client::VERSION == {{ `shards version`.stringify }}
+  end
+
+  it "ACCESS refused error includes connection details" do
+    c = AMQP::Client.new(user: "foo")
+    expect_raises(AMQP::Client::Connection::ClosedException, /user=foo/) do
+      c.connect
     end
   end
 end

@@ -1,14 +1,13 @@
 class AMQP::Client
   class Error < Exception
-  end
+    class UnexpectedFrame < Error
+      def initialize
+        super
+      end
 
-  class UnexpectedFrame < Error
-    def initialize
-      super
-    end
-
-    def initialize(frame : Frame)
-      super(frame.inspect)
+      def initialize(frame : Frame)
+        super(frame.inspect)
+      end
     end
   end
 
@@ -18,8 +17,12 @@ class AMQP::Client
         super(message, cause)
       end
 
-      def initialize(close : Frame::Connection::Close)
-        super("#{close.reply_code} - #{close.reply_text}")
+      def initialize(frame : Frame::Connection::Close)
+        super("#{frame.reply_text} (#{frame.reply_code})")
+      end
+
+      def initialize(message, host, user, vhost)
+        super "#{message} host=#{host} user=#{user} vhost=#{vhost}"
       end
     end
   end

@@ -1,8 +1,8 @@
 require "./spec_helper"
 
-describe AMQP::Client do
+describe "Websocket client" do
   it "should connect over websocket" do
-    c = AMQP::Client.new("ws://localhost:15672")
+    c = AMQP::Client.new(websocket: true, port: 15672)
     conn = c.connect
     conn.should_not be_nil
     conn.close
@@ -169,11 +169,10 @@ describe AMQP::Client do
 
   it "raises exception on write when the server has closed the connection" do
     with_ws_channel do |ch|
-      # rabbitmq doesn't implement client flow
-      ch.flow(false)
+      ch.exchange_declare("foo", "bar", no_wait: true)
       sleep 0.1
       # by now we should've gotten the connection closed by the server
-      expect_raises(AMQP::Client::Connection::ClosedException) do
+      expect_raises(AMQP::Client::Channel::ClosedException) do
         ch.queue
       end
     end
@@ -202,7 +201,7 @@ describe AMQP::Client do
         q.publish "again"
         msg.ack
         b = true
-        q.unsubscribe(tag)
+        q.unsubscribe(tag, no_wait: true)
       end
       b.should be_true
     end
@@ -221,7 +220,7 @@ describe AMQP::Client do
   end
 
   it "should open all queues" do
-    AMQP::Client.start("ws://localhost:15672/") do |c|
+    with_ws_connection do |c|
       (1_u16..c.channel_max).each do |id|
         ch = c.channel
         ch.id.should eq id
@@ -230,22 +229,26 @@ describe AMQP::Client do
   end
 
   it "should set connection name" do
-    AMQP::Client.start("ws://localhost:15672/?name=My+Name") do |_|
-      sleep 5 # RabbitMQ is slow
-      HTTP::Client.get("http://guest:guest@localhost:15672/api/connections") do |resp|
-        conns = JSON.parse resp.body_io
-        names = conns.as_a.map { |c| c.dig?("client_properties", "connection_name") }
-        names.should contain "My Name"
+    AMQP::Client.start(websocket: true, port: 15672, name: "My Name") do |_|
+      names = Array(String).new
+      5.times do
+        HTTP::Client.get("http://guest:guest@#{AMQP::Client::AMQP_HOST}:15672/api/connections") do |resp|
+          conns = JSON.parse resp.body_io
+          names = conns.as_a.map &.dig("client_properties", "connection_name")
+          break if names.includes? "My name"
+        end
+        sleep 1
       end
+      names.should contain "My Name"
     end
   end
 
   it "should not wait for connection close" do
-    conn = AMQP::Client.new("ws://localhost:15672").connect
+    conn = AMQP::Client.new(websocket: true, port: 15672).connect
     conn.close(no_wait: true)
   end
 
-  it "should not drop messages on basic_cancel" do
+  pending "should not drop messages on basic_cancel" do
     with_ws_channel do |ch|
       tag = "block"
       q = ch.queue("basic_cancel")

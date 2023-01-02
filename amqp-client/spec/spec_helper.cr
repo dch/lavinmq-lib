@@ -4,7 +4,7 @@ require "json"
 require "../src/amqp-client"
 
 Log.setup_from_env
-Spec.override_default_formatter(Spec::VerboseFormatter.new)
+Spec.override_default_formatter(Spec::VerboseFormatter.new) unless ENV["CI"]?
 
 module TestHelpers
   def with_connection(**args)
@@ -20,7 +20,7 @@ module TestHelpers
   end
 
   def with_ws_connection
-    AMQP::Client.start("ws://localhost:15672") do |c|
+    AMQP::Client.start(websocket: true, port: 15672) do |c|
       yield c
     end
   end

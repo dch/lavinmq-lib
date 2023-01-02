@@ -7,6 +7,76 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [1.1.2] - 2022-11-26
+
+### Changed
+
+- Include type # in FrameDecode error message if invalid Method type
+
+## [1.1.1] - 2022-11-18
+
+### Fixed
+
+- Bug fix for Properties.from_json
+
+## [1.1.0] - 2022-11-18
+
+### Changed
+
+- Removed Properties.cast_to_fields
+
+## [1.0.8] - 2022-11-14
+
+### Fixed
+
+- Removed the use of a StringPool in ShortStrings, to fix a multi threading issue and memory growth issues.
+
+## [1.0.7] - 2022-10-28
+
+### Changed
+
+- 10-20% faster encoding/decoding of frames
+
+## [1.0.6] - 2022-02-22
+
+### Added
+
+- Support for JSON::Any in Tables
+
+## [1.0.5] - 2022-02-03
+
+### Changed
+
+- Table.from_bytes copies the bytes, so that it can be modified later on
+
+## [1.0.4] - 2022-02-01
+
+### Added
+
+- Properties/ShortString/Table.from_bytes for parsing directly from a byte slice
+
+## [1.0.3] - 2022-02-01
+
+### Fixed
+
+- Properties#timestamp= now works as expected
+
+### Added
+
+- Try parse timestamp as milliseconds from epoch if seconds from epoch overflows
+
+## [1.0.2] - 2022-02-01
+
+### Changed
+
+- Parse timestamp on demand, as it might not contain a valid timestamp
+
+## [1.0.1] - 2021-06-09
+
+### Added
+
+- Table can be created from a NamedTuple
+
 ## [1.0.0] - 2021-03-23
 
 ### Changed

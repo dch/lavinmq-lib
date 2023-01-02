@@ -5,39 +5,32 @@ jobs:
   lint:
     name: Lint
     runs-on: ubuntu-latest
-    continue-on-error: true
     container: 84codes/crystal:latest-ubuntu-20.04
+
     steps:
-      - uses: actions/checkout@v3
+      - name: Checkout
+        uses: actions/checkout@v3
       - name: Checkout ameba
         uses: actions/checkout@v3
         with:
           repository: crystal-ameba/ameba
           path: ameba
-      - name: Build ameba
+      - name: Compile ameba
         run: make -C ameba
-      - name: Run ameba
-        run: ameba/bin/ameba
+      - name: Lint
+        run: ameba/bin/ameba src
 
   spec:
     name: Spec
     runs-on: ubuntu-latest
     container: 84codes/crystal:latest-ubuntu-20.04
-    services:
-      lavinmq:
-        image: cloudamqp/lavinmq
-
     steps:
       - name: Checkout
         uses: actions/checkout@v3
-
       - name: Shards install
         run: shards install
-
       - name: Spec
         run: crystal spec --order random
-        env:
-          AMQP_URL: amqp://lavinmq
 
   format:
     name: Formatting
@@ -46,6 +39,5 @@ jobs:
     steps:
       - name: Checkout
         uses: actions/checkout@v3
-
       - name: Format check
         run: crystal tool format --check

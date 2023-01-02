@@ -8,6 +8,13 @@ module AMQ
     struct Table
       BYTEFORMAT = IO::ByteFormat::NetworkEndian
 
+      def initialize(hash : NamedTuple, @io = IO::Memory.new)
+        hash.each do |key, value|
+          @io.write_bytes(ShortString.new(key.to_s))
+          write_field(value)
+        end
+      end
+
       def initialize(hash : Hash(String, Field)?, @io = IO::Memory.new)
         hash.each do |key, value|
           @io.write_bytes(ShortString.new(key))
@@ -119,7 +126,7 @@ module AMQ
         h
       end
 
-      def to_json(json)
+      def to_json(json : JSON::Builder)
         json.object do
           @io.rewind
           while @io.pos < @io.bytesize
@@ -174,6 +181,13 @@ module AMQ
         IO.copy(@io, io, @io.bytesize)
       end
 
+      def self.from_bytes(bytes, format) : self
+        size = format.decode(UInt32, bytes[0, 4])
+        mem = IO::Memory.new(size)
+        mem.write(bytes[4, size])
+        self.new(mem)
+      end
+
       def self.from_io(io, format, size : UInt32? = nil) : self
         size ||= UInt32.from_io(io, format)
         mem = IO::Memory.new(size)
@@ -187,6 +201,8 @@ module AMQ
 
       private def write_field(value)
         case value
+        when JSON::Any
+          write_field(value.raw)
         when Bool
           @io.write_byte 't'.ord.to_u8
           @io.write_byte(value ? 1_u8 : 0_u8)
@@ -241,7 +257,10 @@ module AMQ
         when Table
           @io.write_byte 'F'.ord.to_u8
           @io.write_bytes value, BYTEFORMAT
-        when Hash(String, Field)
+        when Hash
+          @io.write_byte 'F'.ord.to_u8
+          @io.write_bytes Table.new(value), BYTEFORMAT
+        when NamedTuple
           @io.write_byte 'F'.ord.to_u8
           @io.write_bytes Table.new(value), BYTEFORMAT
         when Nil
